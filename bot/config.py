@@ -125,13 +125,13 @@ WATCHED_ASSETS: dict[str, list[str]] = {
     "ETH": ["KXETH-5M", "KXETH-15M"],
 }
 
-# Binance streams for mid-price
+# Binance.US streams for mid-price (binance.com blocks US IPs — use binance.us)
 BINANCE_STREAMS: dict[str, str] = {
-    "BTC": "btcusdt@bookTicker",
-    "ETH": "ethusdt@bookTicker",
+    "BTC": "btcusd@bookTicker",
+    "ETH": "ethusd@bookTicker",
 }
 
-BINANCE_WS_URL = "wss://stream.binance.com:9443/stream"
+BINANCE_WS_URL = "wss://stream.binance.us:9443/stream"
 
 # Rolling window (seconds) for price-momentum calculation
 MOMENTUM_WINDOW_SECS: int = 30

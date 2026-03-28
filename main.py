@@ -119,9 +119,16 @@ class ArbBot:
         )
 
         # Set up signal handlers for graceful shutdown
+        # add_signal_handler is Unix-only; fall back to signal.signal on Windows
         loop = asyncio.get_running_loop()
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, self._request_shutdown)
+        try:
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                loop.add_signal_handler(sig, self._request_shutdown)
+        except NotImplementedError:
+            # Windows — use threading signal handlers instead
+            signal.signal(signal.SIGINT, lambda *_: self._request_shutdown())
+            if hasattr(signal, "SIGTERM"):
+                signal.signal(signal.SIGTERM, lambda *_: self._request_shutdown())
 
         # Launch all concurrent tasks
         self._tasks = [

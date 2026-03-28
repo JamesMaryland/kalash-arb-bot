@@ -207,10 +207,13 @@ class BinanceFeed:
         ask = float(ask_s)
         mid = (bid + ask) / 2.0
 
-        # Map symbol → asset key
+        # Map symbol → asset key (handles both USDT and USD pairs)
         asset: Optional[str] = None
         for a, stream_name in BINANCE_STREAMS.items():
-            if stream_name.split("@")[0].upper() == symbol.replace("USDT", ""):
+            base = stream_name.split("@")[0].upper()
+            # strip USD or USDT suffix from the received symbol to get base asset
+            normalised = symbol.replace("USDT", "").replace("USD", "")
+            if base.replace("USDT", "").replace("USD", "") == normalised:
                 asset = a
                 break
         if asset is None:
