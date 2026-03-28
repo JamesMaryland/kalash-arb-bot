@@ -237,9 +237,7 @@ class KalshiClient:
 
         while page < max_pages:
             await self._rate_limiter.acquire()
-            # No status filter — catches open, unopened, and active markets.
-            # The 15-min BTC contract may briefly show as 'unopened' between rolls.
-            params: dict = {"limit": 100}
+            params: dict = {"status": "open", "limit": 100}
             if cursor:
                 params["cursor"] = cursor
             try:
@@ -256,26 +254,25 @@ class KalshiClient:
                 break
 
             markets = body.get("markets", [])
-            # Log first page of titles so we can see what the API actually returns
+            # Log all BTC/ETH related tickers on first page for diagnostics
             if page == 0 and markets:
-                log.info("Sample market titles from Kalshi API (first 10):")
-                for m in markets[:10]:
-                    log.info("  ticker=%-40s title=%s", m.get("ticker",""), m.get("title",""))
+                btc_eth = [m for m in markets if any(a in m.get("ticker","").upper() for a in ("BTC","ETH"))]
+                if btc_eth:
+                    log.info("BTC/ETH markets on page 0:")
+                    for m in btc_eth[:20]:
+                        log.info("  %-45s | %s", m.get("ticker",""), m.get("title",""))
+                else:
+                    log.info("No BTC/ETH markets on page 0 (sample: %s)", markets[0].get("ticker","") if markets else "none")
 
             for m in markets:
                 ticker: str = m.get("ticker", "")
-                title: str = m.get("title", "").upper()
-                # Match on ticker prefix (KXBTCD/KXETHD = direction series)
-                # OR title containing directional keywords
-                is_direction_ticker = any(
-                    ticker.upper().startswith(p) for p in ("KXBTCD", "KXETHD", "KXBTC-D", "KXETH-D")
-                )
-                is_up_or_down = any(kw in title for kw in ("UP OR DOWN", "UP/DOWN", "DIRECTION", "HIGHER OR LOWER"))
-                is_short = any(d in title for d in ("15 MINUTE", "5 MINUTE", "15MIN", "5MIN", "15 MIN", "5 MIN"))
-                has_asset = any(a in title for a in ("BTC", "ETH", "BITCOIN", "ETHER"))
-                if is_direction_ticker or (is_up_or_down and is_short and has_asset):
+                # Keep any market whose ticker starts with the direction-series prefixes.
+                # KXBTCD = BTC direction, KXETHD = ETH direction.
+                # Also accept KXBTC/KXETH with a D suffix segment.
+                t_upper = ticker.upper()
+                if any(t_upper.startswith(p) for p in ("KXBTCD", "KXETHD")):
                     results.append(ticker)
-                    log.info("Found market: %s | %s", ticker, m.get("title", ""))
+                    log.info("Found direction market: %s | %s", ticker, m.get("title", ""))
 
             cursor = body.get("cursor")
             page += 1
