@@ -227,35 +227,49 @@ class KalshiClient:
 
     async def _fetch_markets_broad(self) -> list[str]:
         """
-        Broad market scan: fetch up to 1000 open markets and keep only those
-        whose title or ticker mentions BTC/ETH and a short duration keyword
-        (minute, 15, 5min, hourly, etc.).
+        Paginated market scan using cursor-based pagination (Kalshi API max
+        100 per page).  Keeps only pure BTC/ETH Up-or-Down 5-min/15-min markets.
         """
-        await self._rate_limiter.acquire()
-        try:
-            resp = await self._http.get(  # type: ignore[union-attr]
-                "/markets",
-                params={"status": "open", "limit": 1000},
-            )
-            resp.raise_for_status()
-            markets = resp.json().get("markets", [])
-            results = []
+        results: list[str] = []
+        cursor: Optional[str] = None
+        page = 0
+        max_pages = 20  # safety cap — 20 × 100 = 2000 markets max
+
+        while page < max_pages:
+            await self._rate_limiter.acquire()
+            params: dict = {"status": "open", "limit": 100}
+            if cursor:
+                params["cursor"] = cursor
+            try:
+                resp = await self._http.get("/markets", params=params)  # type: ignore[union-attr]
+                if resp.status_code != 200:
+                    log.warning(
+                        "Broad market scan page %d failed: HTTP %d — %s",
+                        page, resp.status_code, resp.text[:200],
+                    )
+                    break
+                body = resp.json()
+            except Exception as exc:
+                log.warning("Broad market scan page %d error: %s", page, exc)
+                break
+
+            markets = body.get("markets", [])
             for m in markets:
                 ticker: str = m.get("ticker", "")
                 title: str = m.get("title", "").upper()
-                # Only want pure directional (Up or Down) contracts, not
-                # price-level contracts (above/below $X) or weekly/daily markets.
-                # Require title to contain "UP OR DOWN" and a short duration.
                 is_up_or_down = "UP OR DOWN" in title
-                is_short_duration = any(d in title for d in ("15 MINUTE", "5 MINUTE"))
+                is_short = any(d in title for d in ("15 MINUTE", "5 MINUTE"))
                 has_asset = any(a in title for a in ("BTC", "ETH", "BITCOIN", "ETHER"))
-                if is_up_or_down and is_short_duration and has_asset:
+                if is_up_or_down and is_short and has_asset:
                     results.append(ticker)
-                    log.debug("Broad discovery found: %s | %s", ticker, m.get("title", ""))
-            return results
-        except Exception as exc:
-            log.warning("Broad market scan failed: %s", exc)
-            return []
+                    log.info("Found market: %s | %s", ticker, m.get("title", ""))
+
+            cursor = body.get("cursor")
+            if not cursor or not markets:
+                break  # no more pages
+            page += 1
+
+        return results
 
     # ------------------------------------------------------------------
     # Quote fetching
