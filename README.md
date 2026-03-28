@@ -140,6 +140,43 @@ options:
   --log-level            Logging verbosity (default: INFO)
 ```
 
+### Running 24/7 with tmux (Linux / DigitalOcean)
+
+`tmux` lets the bot keep running after you close your SSH session or terminal.
+The Rich dashboard renders correctly inside a tmux session.
+
+**Install tmux**
+```bash
+sudo apt install tmux -y   # Ubuntu/Debian
+```
+
+**Start a session and run the bot**
+```bash
+tmux new -s arb-bot
+source .venv/bin/activate
+python main.py
+```
+
+**Detach — leave the bot running, return to your shell**
+```
+Ctrl+B  then  D
+```
+
+**Reattach from any SSH session**
+```bash
+tmux attach -t arb-bot
+```
+
+**Other useful commands**
+```bash
+tmux ls                        # list active sessions
+tmux kill-session -t arb-bot   # stop the bot and close the session
+```
+
+> **Note:** tmux is not available natively on Windows. It is only needed when
+> hosting on a Linux server (e.g. DigitalOcean). On Windows, simply leave the
+> Command Prompt window open.
+
 ---
 
 ## Terminal Dashboard
