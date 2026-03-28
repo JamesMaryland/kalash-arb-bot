@@ -256,10 +256,13 @@ class KalshiClient:
             for m in markets:
                 ticker: str = m.get("ticker", "")
                 title: str = m.get("title", "").upper()
-                combined = (ticker + " " + title).upper()
-                has_asset = any(a in combined for a in ("BTC", "ETH", "BITCOIN", "ETHER"))
-                has_duration = any(d in combined for d in ("15 MINUTE", "5 MINUTE", "15M", "5M", "UP OR DOWN"))
-                if has_asset and has_duration:
+                # Only want pure directional (Up or Down) contracts, not
+                # price-level contracts (above/below $X) or weekly/daily markets.
+                # Require title to contain "UP OR DOWN" and a short duration.
+                is_up_or_down = "UP OR DOWN" in title
+                is_short_duration = any(d in title for d in ("15 MINUTE", "5 MINUTE"))
+                has_asset = any(a in title for a in ("BTC", "ETH", "BITCOIN", "ETHER"))
+                if is_up_or_down and is_short_duration and has_asset:
                     results.append(ticker)
                     log.debug("Broad discovery found: %s | %s", ticker, m.get("title", ""))
             return results
