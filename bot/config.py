@@ -86,6 +86,9 @@ class RiskConfig:
     win_streak_max_boost: float     # cap on total Kelly boost from win streak
     loss_streak_threshold: int      # number of consecutive losses before reducing size
     loss_streak_reduction: float    # Kelly multiplier applied after loss streak
+    # Signal-tier Kelly multipliers
+    combined_signal_kelly: float    # both arb AND TA agree  → full risk
+    single_signal_kelly: float      # only arb OR only TA    → reduced risk
 
     @classmethod
     def from_env(cls) -> "RiskConfig":
@@ -102,6 +105,8 @@ class RiskConfig:
             win_streak_max_boost=_float("WIN_STREAK_MAX_BOOST", 2.0),
             loss_streak_threshold=int(_float("LOSS_STREAK_THRESHOLD", 3)),
             loss_streak_reduction=_float("LOSS_STREAK_REDUCTION", 0.50),
+            combined_signal_kelly=_float("COMBINED_SIGNAL_KELLY", 1.00),
+            single_signal_kelly=_float("SINGLE_SIGNAL_KELLY", 0.50),
         )
 
 

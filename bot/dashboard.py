@@ -233,7 +233,7 @@ class Dashboard:
 
     def _trades_panel(self) -> Panel:
         table = Table(
-            "ID", "Market", "Asset", "Dur", "Side", "Entry", "Exit", "P&L", "Conf", "Edge", "Time",
+            "ID", "Signal", "Market", "Asset", "Side", "Entry", "Exit", "P&L", "Conf", "Edge", "Time",
             show_header=True,
             header_style="bold blue",
             row_styles=["", "dim"],
@@ -241,18 +241,21 @@ class Dashboard:
         )
         trades = self._recent_trades[:10]
         if not trades:
-            table.add_row("—", "[dim]No trades yet[/]", *[""] * 9)
+            table.add_row("—", "", "[dim]No trades yet[/]", *[""] * 8)
         else:
+            _signal_colors = {"COMBINED": "bold green", "ARB_ONLY": "yellow", "TA_ONLY": "cyan"}
             for t in trades:
                 pnl = t.get("pnl")
                 pnl_str = f"[{'green' if pnl and pnl >= 0 else 'red'}]{pnl:+.4f}[/]" if pnl is not None else "[dim]open[/]"
-                status_color = {"OPEN": "yellow", "CLOSED": "green", "EXPIRED": "dim", "CANCELLED": "red"}.get(t.get("status", ""), "white")
                 opened = t.get("opened_at", "")[:19] if t.get("opened_at") else ""
+                sig = t.get("signal_type", "ARB_ONLY")
+                sig_color = _signal_colors.get(sig, "white")
+                sig_short = {"COMBINED": "COMB", "ARB_ONLY": "ARB", "TA_ONLY": "TA"}.get(sig, sig[:4])
                 table.add_row(
                     str(t.get("id", "")),
-                    (t.get("market_ticker") or "")[-20:],
+                    f"[{sig_color}]{sig_short}[/]",
+                    (t.get("market_ticker") or "")[-18:],
                     t.get("asset", ""),
-                    t.get("contract_type", "")[:6],
                     f"[cyan]{t.get('side','')[:3]}[/]",
                     f"{t.get('entry_price', 0):.4f}",
                     f"{t.get('exit_price', 0):.4f}" if t.get("exit_price") else "[dim]—[/]",

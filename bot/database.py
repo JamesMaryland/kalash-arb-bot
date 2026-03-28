@@ -49,6 +49,7 @@ class Trade:
     confidence: float
     kelly_fraction: float
     is_paper: bool
+    signal_type: str = "ARB_ONLY"  # COMBINED, ARB_ONLY, or TA_ONLY
     status: TradeStatus = TradeStatus.OPEN
     exit_price: Optional[float] = None
     pnl: Optional[float] = None
@@ -92,6 +93,7 @@ class Database:
                     confidence      REAL    NOT NULL,
                     kelly_fraction  REAL    NOT NULL,
                     is_paper        INTEGER NOT NULL DEFAULT 1,
+                    signal_type     TEXT    NOT NULL DEFAULT 'ARB_ONLY',
                     status          TEXT    NOT NULL DEFAULT 'OPEN',
                     exit_price      REAL,
                     pnl             REAL,
@@ -136,6 +138,15 @@ class Database:
                 );
             """)
             await db.commit()
+            # Migration: add signal_type column if it doesn't exist yet
+            try:
+                await db.execute(
+                    "ALTER TABLE trades ADD COLUMN signal_type TEXT NOT NULL DEFAULT 'ARB_ONLY'"
+                )
+                await db.commit()
+                log.info("DB migration: added signal_type column to trades")
+            except Exception:
+                pass  # column already exists
         log.info("Database initialised at %s", self._path)
 
     # ------------------------------------------------------------------
@@ -149,15 +160,15 @@ class Database:
                 INSERT INTO trades
                     (market_ticker, asset, contract_type, side, size,
                      entry_price, fair_value, edge_pct, confidence,
-                     kelly_fraction, is_paper, status, opened_at, order_id)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     kelly_fraction, is_paper, signal_type, status, opened_at, order_id)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     trade.market_ticker, trade.asset, trade.contract_type,
                     trade.side.value, trade.size, trade.entry_price,
                     trade.fair_value, trade.edge_pct, trade.confidence,
                     trade.kelly_fraction, int(trade.is_paper),
-                    trade.status.value,
+                    trade.signal_type, trade.status.value,
                     trade.opened_at.isoformat(), trade.order_id,
                 ),
             )

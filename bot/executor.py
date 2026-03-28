@@ -109,6 +109,7 @@ class TradeExecutor:
             confidence=opp.confidence,
             kelly_fraction=self._cfg.risk.kelly_fraction * kelly_mult,
             is_paper=self._is_paper,
+            signal_type=opp.signal_type.value,
             status=TradeStatus.OPEN,
             opened_at=datetime.now(timezone.utc),
         )
@@ -132,8 +133,9 @@ class TradeExecutor:
         await self._portfolio.open_position(trade, trade_id)
 
         log.info(
-            "[%s] Trade opened: id=%d %s %s x%d @ %.4f | edge=%.1f%% conf=%.1f%%",
+            "[%s][%s] Trade opened: id=%d %s %s x%d @ %.4f | edge=%.1f%% conf=%.1f%%",
             "PAPER" if self._is_paper else "LIVE",
+            opp.signal_type.value,
             trade_id,
             ticker,
             opp.side,

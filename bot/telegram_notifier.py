@@ -67,8 +67,11 @@ class TelegramNotifier:
 
     async def trade_opened(self, trade_id: int, opp: ArbOpportunity, is_paper: bool) -> None:
         mode = "PAPER" if is_paper else "LIVE"
+        signal_icons = {"COMBINED": "🔥", "ARB_ONLY": "📊", "TA_ONLY": "📈"}
+        signal_icon = signal_icons.get(opp.signal_type.value, "📊")
         msg = (
             f"{'📝' if is_paper else '⚡'} *Trade Opened [{mode}]* `#{trade_id}`\n\n"
+            f"*Signal:* {signal_icon} `{opp.signal_type.value}`\n"
             f"*Market:* `{opp.quote.ticker}`\n"
             f"*Asset:* {opp.quote.asset}  |  *Duration:* {opp.quote.duration}\n"
             f"*Side:* {opp.side}  |  *Size:* {opp.max_contracts} contracts\n"

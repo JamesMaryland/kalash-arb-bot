@@ -1,15 +1,25 @@
 """
-Arbitrage opportunity detection and sizing engine.
+Arbitrage + TA combined signal engine.
 
-Pipeline for each Kalshi market quote:
-  1. Compare Kalshi implied probability to Binance-derived fair probability.
-  2. If |delta| > lag_threshold (3pp default) → candidate opportunity.
-  3. Score confidence based on: momentum strength, price recency,
-     quote staleness, spread width, and volume.
-  4. Gate: edge > min_edge (5%) AND confidence > min_confidence (85%)
-     AND proposed position < max_position_pct (8%) of portfolio.
-  5. Size with fractional Kelly Criterion (half-Kelly by default).
-  6. Return ArbOpportunity if all gates pass, else None.
+Signal tiers (in order of conviction):
+
+  COMBINED  — Kalshi lags CEX price (arb) AND TA confirms same direction
+              → full Kelly sizing (highest conviction)
+
+  ARB_ONLY  — Kalshi lags CEX price but TA is neutral/disagrees
+              → half Kelly sizing (structural edge, less directional certainty)
+
+  TA_ONLY   — TA signals a clear direction but no Kalshi lag detected
+              → half Kelly sizing (directional edge, no structural mispricing)
+
+  NONE      — Neither signal fires → no trade
+
+Pipeline:
+  1. Check arb: does Kalshi lag Binance by > lag_threshold?
+  2. Check TA: do RSI + EMA crossover + momentum agree on direction?
+  3. Determine signal tier and apply matching Kelly multiplier.
+  4. Gate: confidence > min_confidence AND position < max_position_pct.
+  5. Return ArbOpportunity with signal_type embedded.
 """
 from __future__ import annotations
 
@@ -17,26 +27,37 @@ import logging
 import math
 import time
 from dataclasses import dataclass
+from enum import Enum
 from typing import Optional
 
 from bot.binance_feed import AssetState
 from bot.config import RiskConfig
 from bot.kalshi_client import MarketQuote
+from bot.ta_engine import TAEngine, TASignal
 
 log = logging.getLogger(__name__)
+
+
+class SignalType(str, Enum):
+    COMBINED = "COMBINED"   # arb + TA agree  — full Kelly
+    ARB_ONLY = "ARB_ONLY"   # arb only        — half Kelly
+    TA_ONLY  = "TA_ONLY"    # TA only         — half Kelly
+    NONE     = "NONE"       # no trade
 
 
 @dataclass
 class ArbOpportunity:
     quote: MarketQuote
-    side: str                 # "YES" or "NO" — which side we buy
-    fair_prob: float          # our estimated fair probability for YES
+    side: str                 # "YES" or "NO"
+    fair_prob: float          # estimated fair probability for YES
     kalshi_prob: float        # Kalshi's implied YES probability
-    edge: float               # |fair_prob - entry_price| — our expected edge
+    edge: float               # expected edge (0–1)
     confidence: float         # 0–1 score
     kelly_size_usd: float     # recommended position in USD
     max_contracts: int        # integer number of $1 contracts
-    entry_price: float        # price we'd pay per contract (0–1)
+    entry_price: float        # price per contract (0–1)
+    signal_type: SignalType   # what fired this trade
+    ta_signal: Optional[TASignal] = None
 
     @property
     def edge_pct(self) -> float:
@@ -44,7 +65,7 @@ class ArbOpportunity:
 
     def __str__(self) -> str:
         return (
-            f"ARB {self.quote.ticker} | side={self.side} "
+            f"[{self.signal_type.value}] {self.quote.ticker} | side={self.side} "
             f"fair={self.fair_prob:.3f} kalshi={self.kalshi_prob:.3f} "
             f"edge={self.edge:.1%} conf={self.confidence:.1%} "
             f"kelly=${self.kelly_size_usd:.2f} ({self.max_contracts} contracts)"
@@ -53,12 +74,14 @@ class ArbOpportunity:
 
 class ArbEngine:
     """
-    Stateless signal generator.  Call `evaluate(quote, asset_state, portfolio_value)`
-    to get an ArbOpportunity or None.
+    Combined arb + TA signal generator.
+    Call `evaluate(quote, asset_state, portfolio_value)` to get an
+    ArbOpportunity or None.
     """
 
     def __init__(self, risk: RiskConfig) -> None:
         self._risk = risk
+        self._ta = TAEngine()
 
     def evaluate(
         self,
@@ -87,23 +110,48 @@ class ArbEngine:
             fair_yes_prob = 1.0 - fair_yes_prob
 
         kalshi_implied = quote.implied_yes_prob
-
         delta = fair_yes_prob - kalshi_implied  # positive → Kalshi under-pricing YES
 
-        if abs(delta) < self._risk.lag_threshold_pct:
-            return None  # lag is within tolerance, no opportunity
+        # ------------------------------------------------------------------
+        # Signal detection: arb (Kalshi lag) and TA (technical indicators)
+        # ------------------------------------------------------------------
+        arb_fires = abs(delta) >= self._risk.lag_threshold_pct
+        arb_side: Optional[str] = None
+        if arb_fires:
+            arb_side = "YES" if delta > 0 else "NO"
+
+        ta_signal = self._ta.evaluate(asset_state)
+        ta_fires = ta_signal.confirmed
 
         # ------------------------------------------------------------------
-        # Side selection: buy YES if we think YES is underpriced, else NO
+        # Signal tier selection
+        # COMBINED  — arb fires AND TA confirms same direction → full Kelly
+        # ARB_ONLY  — arb fires, TA neutral or disagrees       → half Kelly
+        # TA_ONLY   — TA confirmed, arb below threshold        → half Kelly
+        # NONE      — neither signal fires                     → no trade
         # ------------------------------------------------------------------
-        if delta > 0:
-            # YES is cheap relative to fair value
-            side = "YES"
+        if arb_fires and ta_fires and ta_signal.agrees_with(arb_side):
+            signal_type = SignalType.COMBINED
+            side = arb_side
+            signal_kelly_mult = self._risk.combined_signal_kelly
+        elif arb_fires:
+            signal_type = SignalType.ARB_ONLY
+            side = arb_side
+            signal_kelly_mult = self._risk.single_signal_kelly
+        elif ta_fires:
+            signal_type = SignalType.TA_ONLY
+            side = "YES" if ta_signal.direction == "UP" else "NO"
+            signal_kelly_mult = self._risk.single_signal_kelly
+        else:
+            return None  # neither signal fired
+
+        # ------------------------------------------------------------------
+        # Side-specific entry price and fair probability
+        # ------------------------------------------------------------------
+        if side == "YES":
             entry_price = quote.yes_ask
             fair_prob_for_side = fair_yes_prob
         else:
-            # NO is cheap
-            side = "NO"
             entry_price = quote.no_ask
             fair_prob_for_side = 1.0 - fair_yes_prob
 
@@ -114,8 +162,8 @@ class ArbEngine:
 
         if edge < self._risk.min_edge_pct:
             log.debug(
-                "Edge %.1f%% below minimum %.1f%% for %s",
-                edge * 100, self._risk.min_edge_pct * 100, quote.ticker,
+                "Edge %.1f%% below minimum %.1f%% for %s [%s]",
+                edge * 100, self._risk.min_edge_pct * 100, quote.ticker, signal_type.value,
             )
             return None
 
@@ -125,13 +173,13 @@ class ArbEngine:
         confidence = self._score_confidence(quote, asset_state, edge)
         if confidence < self._risk.min_confidence:
             log.debug(
-                "Confidence %.1f%% below minimum %.1f%% for %s",
-                confidence * 100, self._risk.min_confidence * 100, quote.ticker,
+                "Confidence %.1f%% below minimum %.1f%% for %s [%s]",
+                confidence * 100, self._risk.min_confidence * 100, quote.ticker, signal_type.value,
             )
             return None
 
         # ------------------------------------------------------------------
-        # Kelly position sizing
+        # Kelly position sizing with signal-tier multiplier
         # ------------------------------------------------------------------
         kelly_size_usd = self._kelly_size(
             edge=edge,
@@ -139,6 +187,8 @@ class ArbEngine:
             entry_price=entry_price,
             portfolio_value=portfolio_value,
         )
+        # Apply signal-tier fraction (COMBINED=1.0×, ARB_ONLY/TA_ONLY=0.5×)
+        kelly_size_usd *= signal_kelly_mult
 
         # Hard cap: max_position_pct of portfolio
         max_allowed_usd = portfolio_value * self._risk.max_position_pct
@@ -150,6 +200,12 @@ class ArbEngine:
         # Kalshi contracts pay $1 max; price == our max cost per contract
         max_contracts = max(1, int(kelly_size_usd / entry_price))
 
+        log.debug(
+            "%s signal: %s side=%s edge=%.1f%% conf=%.1f%% kelly_mult=%.1f kelly=$%.2f",
+            signal_type.value, quote.ticker, side,
+            edge * 100, confidence * 100, signal_kelly_mult, kelly_size_usd,
+        )
+
         return ArbOpportunity(
             quote=quote,
             side=side,
@@ -160,6 +216,8 @@ class ArbEngine:
             kelly_size_usd=kelly_size_usd,
             max_contracts=max_contracts,
             entry_price=entry_price,
+            signal_type=signal_type,
+            ta_signal=ta_signal,
         )
 
     # ------------------------------------------------------------------
