@@ -254,13 +254,24 @@ class KalshiClient:
                 break
 
             markets = body.get("markets", [])
+            # Log first page of titles so we can see what the API actually returns
+            if page == 0 and markets:
+                log.info("Sample market titles from Kalshi API (first 10):")
+                for m in markets[:10]:
+                    log.info("  ticker=%-40s title=%s", m.get("ticker",""), m.get("title",""))
+
             for m in markets:
                 ticker: str = m.get("ticker", "")
                 title: str = m.get("title", "").upper()
-                is_up_or_down = "UP OR DOWN" in title
-                is_short = any(d in title for d in ("15 MINUTE", "5 MINUTE"))
+                # Match on ticker prefix (KXBTCD/KXETHD = direction series)
+                # OR title containing directional keywords
+                is_direction_ticker = any(
+                    ticker.upper().startswith(p) for p in ("KXBTCD", "KXETHD", "KXBTC-D", "KXETH-D")
+                )
+                is_up_or_down = any(kw in title for kw in ("UP OR DOWN", "UP/DOWN", "DIRECTION", "HIGHER OR LOWER"))
+                is_short = any(d in title for d in ("15 MINUTE", "5 MINUTE", "15MIN", "5MIN", "15 MIN", "5 MIN"))
                 has_asset = any(a in title for a in ("BTC", "ETH", "BITCOIN", "ETHER"))
-                if is_up_or_down and is_short and has_asset:
+                if is_direction_ticker or (is_up_or_down and is_short and has_asset):
                     results.append(ticker)
                     log.info("Found market: %s | %s", ticker, m.get("title", ""))
 
