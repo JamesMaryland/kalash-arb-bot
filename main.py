@@ -67,6 +67,13 @@ SETTLEMENT_CHECK_INTERVAL = 30.0 # seconds between settlement checks
 DAILY_STATS_INTERVAL = 300.0     # 5 minutes
 MARKET_REFRESH_INTERVAL = 300.0  # re-discover Kalshi markets every 5 min
 
+# Contract roll boundaries in minutes-past-the-hour.
+# 15-min contracts roll at :00, :15, :30, :45.
+# We trigger a forced refresh 5 seconds AFTER each boundary to give
+# Kalshi time to open the new contract.
+CONTRACT_ROLL_MINUTES = {0, 15, 30, 45}
+CONTRACT_ROLL_OFFSET_SECS = 5   # seconds after the boundary to scan
+
 
 # ---------------------------------------------------------------------------
 # Main bot class
@@ -138,6 +145,7 @@ class ArbBot:
             asyncio.create_task(self._daily_stats_flusher(), name="stats-flusher"),
             asyncio.create_task(self._kill_switch_monitor(), name="kill-switch-monitor"),
             asyncio.create_task(self._market_refresher(), name="market-refresher"),
+            asyncio.create_task(self._contract_roll_watcher(), name="roll-watcher"),
         ]
         await self._dashboard.start()
 
@@ -340,6 +348,46 @@ class ArbBot:
                 log.info("Market refresh: %d active markets", len(self._kalshi._active_tickers))
             except Exception as exc:
                 log.warning("Market refresh error: %s", exc)
+
+    async def _contract_roll_watcher(self) -> None:
+        """
+        Watches for 15-minute contract roll boundaries (:00, :15, :30, :45).
+        Fires CONTRACT_ROLL_OFFSET_SECS after each boundary to:
+          1. Re-discover markets (new contract just opened)
+          2. Immediately refresh all orderbook quotes
+          3. Run one aggressive arb scan pass
+        This ensures we catch the freshest pricing on newly opened contracts
+        before market makers have fully updated their quotes.
+        """
+        last_triggered_minute: int = -1
+
+        while not self._shutdown_event.is_set():
+            await asyncio.sleep(1.0)
+            now = datetime.now(timezone.utc)
+            minute = now.minute
+            second = now.second
+
+            # Fire once per boundary, CONTRACT_ROLL_OFFSET_SECS seconds after
+            is_roll_boundary = minute in CONTRACT_ROLL_MINUTES
+            is_trigger_window = CONTRACT_ROLL_OFFSET_SECS <= second < CONTRACT_ROLL_OFFSET_SECS + 10
+            already_triggered = last_triggered_minute == minute
+
+            if is_roll_boundary and is_trigger_window and not already_triggered:
+                last_triggered_minute = minute
+                log.info(
+                    "Contract roll detected at %02d:%02d UTC — forcing market refresh + scan",
+                    now.hour, minute,
+                )
+                try:
+                    # Step 1: rediscover (new contracts may have opened)
+                    await self._kalshi._discover_markets()
+                    # Step 2: immediately poll all quotes
+                    await self._kalshi.refresh_quotes()
+                    # Step 3: aggressive scan
+                    await self._scan_once()
+                    log.info("Post-roll scan complete. Tracking %d markets.", len(self._kalshi._active_tickers))
+                except Exception as exc:
+                    log.warning("Contract roll handler error: %s", exc)
 
 
 # ---------------------------------------------------------------------------

@@ -88,8 +88,8 @@ class RiskConfig:
             portfolio_balance=_float("PORTFOLIO_BALANCE", 10_000.0),
             max_position_pct=_float("MAX_POSITION_PCT", 0.08),
             kelly_fraction=_float("KELLY_FRACTION", 0.5),
-            min_edge_pct=_float("MIN_EDGE_PCT", 0.05),
-            min_confidence=_float("MIN_CONFIDENCE", 0.85),
+            min_edge_pct=_float("MIN_EDGE_PCT", 0.03),
+            min_confidence=_float("MIN_CONFIDENCE", 0.70),
             lag_threshold_pct=_float("LAG_THRESHOLD_PCT", 0.03),
             daily_drawdown_limit=_float("DAILY_DRAWDOWN_LIMIT", 0.20),
         )

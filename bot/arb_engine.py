@@ -215,8 +215,8 @@ class ArbEngine:
         spread_score = max(0.0, 1.0 - quote.spread / 0.10)
         scores.append((spread_score, 0.15))
 
-        # -- Volume quality --
-        vol_q = min(1.0, quote.volume / 1000) if quote.volume else 0.3
+        # -- Volume quality -- (threshold lowered to 50 so demo markets aren't penalised)
+        vol_q = min(1.0, quote.volume / 50) if quote.volume else 0.3
         scores.append((vol_q, 0.15))
 
         total_weight = sum(w for _, w in scores)
