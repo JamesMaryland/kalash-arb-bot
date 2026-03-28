@@ -19,7 +19,6 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import httpx
-from clob_client.client import ClobClient  # py-clob-client
 
 from bot.config import (
     KALSHI_QUOTE_MAX_AGE_SECS,
@@ -103,8 +102,6 @@ class KalshiClient:
         self._quotes: dict[str, MarketQuote] = {}  # ticker → latest quote
         self._active_tickers: list[str] = []
         self._http: Optional[httpx.AsyncClient] = None
-        # py-clob-client is synchronous; we run it in a thread executor
-        self._clob: Optional[ClobClient] = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -118,15 +115,6 @@ class KalshiClient:
                 "Content-Type": "application/json",
             },
             timeout=10.0,
-        )
-        loop = asyncio.get_running_loop()
-        self._clob = await loop.run_in_executor(
-            None,
-            lambda: ClobClient(
-                host=self._cfg.base_url,
-                key=self._cfg.api_key,
-                secret=self._cfg.api_secret,
-            ),
         )
         await self._discover_markets()
         log.info("KalshiClient started — tracking %d markets", len(self._active_tickers))
@@ -170,22 +158,20 @@ class KalshiClient:
 
         await self._rate_limiter.acquire()
         try:
-            loop = asyncio.get_running_loop()
-            resp = await loop.run_in_executor(
-                None,
-                lambda: self._clob.create_order(  # type: ignore[union-attr]
-                    {
-                        "ticker": ticker,
-                        "client_order_id": f"arb-{int(time.time() * 1000)}",
-                        "side": side,
-                        "action": "buy",
-                        "count": size,
-                        "type": "limit",
-                        "yes_price": int(price * 100),  # Kalshi uses cent integers
-                    }
-                ),
+            resp = await self._http.post(  # type: ignore[union-attr]
+                "/orders",
+                json={
+                    "ticker": ticker,
+                    "client_order_id": f"arb-{int(time.time() * 1000)}",
+                    "side": side,
+                    "action": "buy",
+                    "count": size,
+                    "type": "limit",
+                    "yes_price": int(price * 100),  # Kalshi uses cent integers
+                },
             )
-            order_id = resp.get("order", {}).get("order_id")
+            resp.raise_for_status()
+            order_id = resp.json().get("order", {}).get("order_id")
             log.info("[LIVE] Order placed: %s %s x%d → id=%s", ticker, side, size, order_id)
             return order_id
         except Exception as exc:
