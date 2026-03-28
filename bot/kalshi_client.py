@@ -237,7 +237,9 @@ class KalshiClient:
 
         while page < max_pages:
             await self._rate_limiter.acquire()
-            params: dict = {"status": "open", "limit": 100}
+            # No status filter — catches open, unopened, and active markets.
+            # The 15-min BTC contract may briefly show as 'unopened' between rolls.
+            params: dict = {"limit": 100}
             if cursor:
                 params["cursor"] = cursor
             try:
@@ -276,10 +278,11 @@ class KalshiClient:
                     log.info("Found market: %s | %s", ticker, m.get("title", ""))
 
             cursor = body.get("cursor")
+            page += 1
             if not cursor or not markets:
                 break  # no more pages
-            page += 1
 
+        log.info("Broad scan complete: %d pages scanned, %d matching markets found", page, len(results))
         return results
 
     # ------------------------------------------------------------------
