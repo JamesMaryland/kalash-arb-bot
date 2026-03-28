@@ -183,20 +183,38 @@ class KalshiClient:
     # ------------------------------------------------------------------
 
     async def _discover_markets(self) -> None:
-        """Find active BTC/ETH 5-min and 15-min markets."""
-        found: list[str] = []
+        """
+        Find active BTC/ETH up/down markets.
+
+        Strategy:
+          1. Try each known series_ticker prefix via /markets?series_ticker=
+          2. Also do a broad /markets?limit=1000 scan and filter by asset keyword
+             so we catch markets regardless of Kalshi's naming changes.
+        """
+        found: set[str] = set()
+
+        # Pass 1 — targeted series_ticker lookup
         for asset, prefixes in WATCHED_ASSETS.items():
             for prefix in prefixes:
                 tickers = await self._fetch_markets_for_prefix(prefix)
-                found.extend(tickers)
+                for t in tickers:
+                    found.add(t)
                 log.debug("Discovered %d markets for prefix %s", len(tickers), prefix)
-        self._active_tickers = found
-        if not found:
+
+        # Pass 2 — broad scan filtered by asset name and short duration keywords
+        broad = await self._fetch_markets_broad()
+        for t in broad:
+            found.add(t)
+
+        self._active_tickers = list(found)
+        if not self._active_tickers:
             log.warning(
-                "No active Kalshi markets found for %s.  "
+                "No active Kalshi markets found for %s. "
                 "The bot will still run and wait for markets to open.",
                 list(WATCHED_ASSETS.keys()),
             )
+        else:
+            log.info("Discovered %d total markets: %s", len(self._active_tickers), self._active_tickers[:5])
 
     async def _fetch_markets_for_prefix(self, series_ticker: str) -> list[str]:
         """
@@ -218,6 +236,35 @@ class KalshiClient:
             return [m["ticker"] for m in markets if m.get("ticker")]
         except Exception as exc:
             log.warning("Market discovery failed for %s: %s", series_ticker, exc)
+            return []
+
+    async def _fetch_markets_broad(self) -> list[str]:
+        """
+        Broad market scan: fetch up to 1000 open markets and keep only those
+        whose title or ticker mentions BTC/ETH and a short duration keyword
+        (minute, 15, 5min, hourly, etc.).
+        """
+        await self._rate_limiter.acquire()
+        try:
+            resp = await self._http.get(  # type: ignore[union-attr]
+                "/markets",
+                params={"status": "open", "limit": 1000},
+            )
+            resp.raise_for_status()
+            markets = resp.json().get("markets", [])
+            results = []
+            for m in markets:
+                ticker: str = m.get("ticker", "")
+                title: str = m.get("title", "").upper()
+                combined = (ticker + " " + title).upper()
+                has_asset = any(a in combined for a in ("BTC", "ETH", "BITCOIN", "ETHER"))
+                has_duration = any(d in combined for d in ("15 MINUTE", "5 MINUTE", "15M", "5M", "UP OR DOWN"))
+                if has_asset and has_duration:
+                    results.append(ticker)
+                    log.debug("Broad discovery found: %s | %s", ticker, m.get("title", ""))
+            return results
+        except Exception as exc:
+            log.warning("Broad market scan failed: %s", exc)
             return []
 
     # ------------------------------------------------------------------

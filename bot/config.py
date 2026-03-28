@@ -118,11 +118,12 @@ class LiveTradingConfig:
         return self.enable and self.confirm and self.override
 
 
-# Kalshi market ticker patterns for BTC/ETH 5-min and 15-min up/down contracts.
-# These are searched dynamically at runtime; adjust prefixes if Kalshi changes naming.
+# Kalshi series ticker prefixes for BTC/ETH up/down contracts.
+# KXBTCD = "BTC Up or Down" series; KXETHD = "ETH Up or Down" series.
+# The bot filters these by duration tag (15M, 1H) at discovery time.
 WATCHED_ASSETS: dict[str, list[str]] = {
-    "BTC": ["KXBTC-5M", "KXBTC-15M"],
-    "ETH": ["KXETH-5M", "KXETH-15M"],
+    "BTC": ["KXBTCD", "KXBTC"],
+    "ETH": ["KXETHD", "KXETH"],
 }
 
 # Binance.US streams for mid-price (binance.com blocks US IPs — use binance.us)
