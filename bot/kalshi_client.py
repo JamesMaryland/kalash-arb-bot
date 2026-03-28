@@ -184,37 +184,24 @@ class KalshiClient:
 
     async def _discover_markets(self) -> None:
         """
-        Find active BTC/ETH up/down markets.
-
-        Strategy:
-          1. Try each known series_ticker prefix via /markets?series_ticker=
-          2. Also do a broad /markets?limit=1000 scan and filter by asset keyword
-             so we catch markets regardless of Kalshi's naming changes.
+        Find active BTC/ETH Up or Down 5-min and 15-min markets.
+        Uses a broad title-filtered scan — the only markets kept are
+        those whose title contains 'Up or Down' and '15 Minute' or
+        '5 Minute' alongside BTC or ETH.
         """
-        found: set[str] = set()
-
-        # Pass 1 — targeted series_ticker lookup
-        for asset, prefixes in WATCHED_ASSETS.items():
-            for prefix in prefixes:
-                tickers = await self._fetch_markets_for_prefix(prefix)
-                for t in tickers:
-                    found.add(t)
-                log.debug("Discovered %d markets for prefix %s", len(tickers), prefix)
-
-        # Pass 2 — broad scan filtered by asset name and short duration keywords
-        broad = await self._fetch_markets_broad()
-        for t in broad:
-            found.add(t)
-
-        self._active_tickers = list(found)
+        found = await self._fetch_markets_broad()
+        self._active_tickers = found
         if not self._active_tickers:
             log.warning(
-                "No active Kalshi markets found for %s. "
-                "The bot will still run and wait for markets to open.",
-                list(WATCHED_ASSETS.keys()),
+                "No active Kalshi Up or Down markets found. "
+                "The bot will still run and wait for markets to open."
             )
         else:
-            log.info("Discovered %d total markets: %s", len(self._active_tickers), self._active_tickers[:5])
+            log.info(
+                "Discovered %d Up/Down markets: %s",
+                len(self._active_tickers),
+                self._active_tickers,
+            )
 
     async def _fetch_markets_for_prefix(self, series_ticker: str) -> list[str]:
         """
