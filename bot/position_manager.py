@@ -67,6 +67,13 @@ class PortfolioManager:
         self._total_trades: int = 0
         self._total_wins: int = 0
 
+        # Streak tracking
+        self._consecutive_wins: int = 0
+        self._consecutive_losses: int = 0
+
+        # Profit lock
+        self._profit_lock_active: bool = False
+
         self._kill_switch_active: bool = False
         self._kill_switch_reason: str = ""
 
@@ -115,6 +122,40 @@ class PortfolioManager:
             return 0.0
         return self._total_wins / self._total_trades
 
+    @property
+    def profit_lock_active(self) -> bool:
+        return self._profit_lock_active
+
+    @property
+    def consecutive_wins(self) -> int:
+        return self._consecutive_wins
+
+    @property
+    def consecutive_losses(self) -> int:
+        return self._consecutive_losses
+
+    @property
+    def kelly_multiplier(self) -> float:
+        """
+        Dynamic Kelly multiplier based on current win/loss streak.
+
+        Win streak:  each consecutive win adds win_streak_boost, capped at
+                     win_streak_max_boost. e.g. 3 wins in a row →
+                     1.0 + (3 × 0.10) = 1.30× Kelly (capped at 2.0×)
+
+        Loss streak: once consecutive_losses >= loss_streak_threshold,
+                     apply loss_streak_reduction multiplier.
+                     e.g. 3 losses → 0.50× Kelly
+                          6 losses → 0.50 × 0.50 = 0.25× Kelly (floor 0.10×)
+        """
+        r = self._risk
+        if self._consecutive_losses >= r.loss_streak_threshold:
+            extra_streaks = (self._consecutive_losses - r.loss_streak_threshold) // r.loss_streak_threshold
+            multiplier = r.loss_streak_reduction ** (1 + extra_streaks)
+            return max(0.10, multiplier)
+        boost = min(r.win_streak_max_boost, 1.0 + self._consecutive_wins * r.win_streak_boost)
+        return boost
+
     # ------------------------------------------------------------------
     # Day roll
     # ------------------------------------------------------------------
@@ -141,11 +182,14 @@ class PortfolioManager:
                 self._day_open_balance = self.total_equity
                 self._daily_trades = 0
                 self._daily_wins = 0
-                # Reset kill switch at start of new day
+                # Reset kill switch and profit lock at start of new day
                 if self._kill_switch_active:
                     log.info("Kill switch reset for new trading day")
                     self._kill_switch_active = False
                     self._kill_switch_reason = ""
+                if self._profit_lock_active:
+                    log.info("Profit lock reset for new trading day")
+                    self._profit_lock_active = False
 
     # ------------------------------------------------------------------
     # Kill switch
@@ -156,18 +200,30 @@ class PortfolioManager:
             return
         dd = self.daily_drawdown
         if dd >= self._risk.daily_drawdown_limit:
-            reason = (
-                f"Daily drawdown {dd:.1%} >= limit {self._risk.daily_drawdown_limit:.1%}"
-            )
+            reason = f"Daily drawdown {dd:.1%} >= limit {self._risk.daily_drawdown_limit:.1%}"
             self._kill_switch_active = True
             self._kill_switch_reason = reason
             log.critical("KILL SWITCH ACTIVATED: %s", reason)
+
+    def _check_profit_lock(self) -> None:
+        if self._profit_lock_active:
+            return
+        if self._day_open_balance <= 0:
+            return
+        daily_gain = self.daily_pnl / self._day_open_balance
+        if daily_gain >= self._risk.daily_profit_target:
+            self._profit_lock_active = True
+            log.info(
+                "PROFIT LOCK: daily gain %.2f%% reached target %.2f%% — no new trades until tomorrow",
+                daily_gain * 100, self._risk.daily_profit_target * 100,
+            )
 
     def can_trade(self) -> tuple[bool, str]:
         """Returns (allowed, reason_if_not)."""
         if self._kill_switch_active:
             return False, f"Kill switch active: {self._kill_switch_reason}"
-        # Check whether opening any new position would breach the cap
+        if self._profit_lock_active:
+            return False, f"Profit lock: daily target {self._risk.daily_profit_target:.0%} reached"
         open_cost = sum(p.cost_basis for p in self._open_positions.values())
         if open_cost / max(1.0, self._balance) >= self._risk.max_position_pct * 5:
             return False, "Too many concurrent open positions"
@@ -222,10 +278,18 @@ class PortfolioManager:
             if pnl > 0:
                 self._daily_wins += 1
                 self._total_wins += 1
+                self._consecutive_wins += 1
+                self._consecutive_losses = 0
+                log.info("Win streak: %d consecutive wins (Kelly %.2fx)", self._consecutive_wins, self.kelly_multiplier)
+            else:
+                self._consecutive_losses += 1
+                self._consecutive_wins = 0
+                log.info("Loss streak: %d consecutive losses (Kelly %.2fx)", self._consecutive_losses, self.kelly_multiplier)
             # Update peak
             if self._balance > self._peak_balance:
                 self._peak_balance = self._balance
             self._check_kill_switch()
+            self._check_profit_lock()
         await self._db.close_trade(trade_id, exit_price, pnl)
         log.info(
             "Position closed: trade_id=%d pnl=%.4f exit=%.4f balance=%.2f",

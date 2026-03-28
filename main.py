@@ -331,11 +331,19 @@ class ArbBot:
                         balance=bal,
                         daily_dd=dd,
                     )
-                    log.critical(
-                        "Kill switch: trading halted. Balance=%.2f DD=%.1%%", bal, dd
-                    )
+                    log.critical("Kill switch: trading halted. Balance=%.2f DD=%.1%%", bal, dd)
                 elif not self._portfolio.kill_switch_active:
                     self._ks_alerted = False  # type: ignore[attr-defined]
+
+                if self._portfolio.profit_lock_active and not getattr(self, "_pl_alerted", False):
+                    self._pl_alerted = True  # type: ignore[attr-defined]
+                    await self._telegram.profit_lock_alert(
+                        balance=bal,
+                        daily_pnl=self._portfolio.daily_pnl,
+                        target_pct=self._cfg.risk.daily_profit_target,
+                    )
+                elif not self._portfolio.profit_lock_active:
+                    self._pl_alerted = False  # type: ignore[attr-defined]
             except Exception as exc:
                 log.warning("Kill switch monitor error: %s", exc)
 

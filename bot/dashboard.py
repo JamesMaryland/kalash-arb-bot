@@ -117,6 +117,8 @@ class Dashboard:
 
         if self._portfolio.kill_switch_active:
             mode_text.append("  ⛔ KILL SWITCH ACTIVE  ", style="bold white on red blink")
+        if self._portfolio.profit_lock_active:
+            mode_text.append("  🔒 PROFIT LOCKED  ", style="bold black on green")
 
         uptime_secs = int(time.monotonic() - self._start_time)
         h, rem = divmod(uptime_secs, 3600)
@@ -157,6 +159,20 @@ class Dashboard:
         )
         table.add_row("Win Rate", f"[white]{wr:.1%}[/]  ({wins}/{total})")
         table.add_row("Open Pos", f"[yellow]{len(pm.open_positions)}[/]")
+
+        # Streak info
+        kelly_mult = pm.kelly_multiplier
+        kelly_color = "green" if kelly_mult > 1.0 else "red" if kelly_mult < 1.0 else "white"
+        if pm.consecutive_wins > 1:
+            streak_str = f"[green]W{pm.consecutive_wins}[/]"
+        elif pm.consecutive_losses > 1:
+            streak_str = f"[red]L{pm.consecutive_losses}[/]"
+        else:
+            streak_str = "[dim]—[/]"
+        table.add_row("Streak", streak_str)
+        table.add_row("Kelly ×", f"[{kelly_color}]{kelly_mult:.2f}x[/]")
+        if pm.profit_lock_active:
+            table.add_row("Status", "[bold green]PROFIT LOCKED[/]")
 
         return Panel(table, title="[bold]Portfolio[/]", border_style="blue")
 

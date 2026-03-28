@@ -99,6 +99,16 @@ class TelegramNotifier:
         )
         await self._enqueue(msg)
 
+    async def profit_lock_alert(self, balance: float, daily_pnl: float, target_pct: float) -> None:
+        msg = (
+            f"🔒 *Profit Lock Activated*\n\n"
+            f"*Daily P&L:* `+${daily_pnl:.2f}` ({daily_pnl/max(1,balance):.1%})\n"
+            f"*Target:* `{target_pct:.0%}` reached — no new trades until tomorrow\n"
+            f"*Balance:* `${balance:.2f}`\n"
+            f"_⏰ {_now()}_"
+        )
+        await self._enqueue(msg)
+
     async def kill_switch_alert(self, reason: str, balance: float, daily_dd: float) -> None:
         msg = (
             f"🚨 *KILL SWITCH ACTIVATED*\n\n"

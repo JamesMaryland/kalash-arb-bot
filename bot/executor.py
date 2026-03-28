@@ -76,8 +76,17 @@ class TradeExecutor:
                 log.debug("Dedup window active for %s", ticker)
                 return None
 
-            # Position-size risk gate
-            cost_usd = opp.entry_price * opp.max_contracts
+            # Apply streak-based Kelly multiplier to contract count
+            kelly_mult = self._portfolio.kelly_multiplier
+            adjusted_contracts = max(1, int(opp.max_contracts * kelly_mult))
+            if kelly_mult != 1.0:
+                log.info(
+                    "Kelly multiplier %.2fx applied: %d → %d contracts",
+                    kelly_mult, opp.max_contracts, adjusted_contracts,
+                )
+
+            # Position-size risk gate (use adjusted size)
+            cost_usd = opp.entry_price * adjusted_contracts
             allowed, reason = self._portfolio.position_allowed(cost_usd)
             if not allowed:
                 log.warning("Position rejected [%s]: %s", ticker, reason)
@@ -93,12 +102,12 @@ class TradeExecutor:
             asset=opp.quote.asset,
             contract_type=contract_type,
             side=Side(opp.side),
-            size=float(opp.max_contracts),
+            size=float(adjusted_contracts),
             entry_price=opp.entry_price,
             fair_value=opp.fair_prob if opp.side == "YES" else 1.0 - opp.fair_prob,
             edge_pct=opp.edge,
             confidence=opp.confidence,
-            kelly_fraction=self._cfg.risk.kelly_fraction,
+            kelly_fraction=self._cfg.risk.kelly_fraction * kelly_mult,
             is_paper=self._is_paper,
             status=TradeStatus.OPEN,
             opened_at=datetime.now(timezone.utc),
@@ -108,7 +117,7 @@ class TradeExecutor:
         order_id = await self._kalshi.place_order(
             ticker=ticker,
             side=opp.side,
-            size=opp.max_contracts,
+            size=adjusted_contracts,
             price=opp.entry_price,
             is_paper=self._is_paper,
         )
