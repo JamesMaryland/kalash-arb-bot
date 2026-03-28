@@ -206,17 +206,7 @@ class PortfolioManager:
             log.critical("KILL SWITCH ACTIVATED: %s", reason)
 
     def _check_profit_lock(self) -> None:
-        if self._profit_lock_active:
-            return
-        if self._day_open_balance <= 0:
-            return
-        daily_gain = self.daily_pnl / self._day_open_balance
-        if daily_gain >= self._risk.daily_profit_target:
-            self._profit_lock_active = True
-            log.info(
-                "PROFIT LOCK: daily gain %.2f%% reached target %.2f%% — no new trades until tomorrow",
-                daily_gain * 100, self._risk.daily_profit_target * 100,
-            )
+        pass  # profit lock disabled — let winners run
 
     def can_trade(self) -> tuple[bool, str]:
         """Returns (allowed, reason_if_not)."""
