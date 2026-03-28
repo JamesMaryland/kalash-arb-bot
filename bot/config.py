@@ -122,8 +122,8 @@ class LiveTradingConfig:
 # KXBTCD = "BTC Up or Down" series; KXETHD = "ETH Up or Down" series.
 # The bot filters these by duration tag (15M, 1H) at discovery time.
 WATCHED_ASSETS: dict[str, list[str]] = {
-    "BTC": ["KXBTCD", "KXBTC"],
-    "ETH": ["KXETHD", "KXETH"],
+    "BTC": ["KXBTC"],
+    "ETH": ["KXETH"],
 }
 
 # Binance.US streams for mid-price (binance.com blocks US IPs — use binance.us)

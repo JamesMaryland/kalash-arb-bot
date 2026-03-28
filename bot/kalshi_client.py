@@ -184,28 +184,26 @@ class KalshiClient:
 
     async def _discover_markets(self) -> None:
         """
-        Find active BTC/ETH Up or Down 5-min and 15-min markets.
-        Uses a broad title-filtered scan — the only markets kept are
-        those whose title contains 'Up or Down' and '15 Minute' or
-        '5 Minute' alongside BTC or ETH.
+        Find all active KXBTC* and KXETH* markets via series_ticker lookup.
+        Returns every open contract in those series so the bot has maximum
+        coverage — the arb engine will evaluate each one independently.
         """
-        found = await self._fetch_markets_broad()
-        self._active_tickers = found
+        found: set[str] = set()
+        for series in ("KXBTC", "KXETH"):
+            tickers = await self._fetch_markets_for_prefix(series)
+            for t in tickers:
+                found.add(t)
+            log.info("Series %s: found %d markets", series, len(tickers))
+
+        self._active_tickers = list(found)
         if not self._active_tickers:
-            log.warning(
-                "No active Kalshi Up or Down markets found. "
-                "The bot will still run and wait for markets to open."
-            )
+            log.warning("No active Kalshi markets found. Bot will retry on next refresh.")
         else:
-            log.info(
-                "Discovered %d Up/Down markets: %s",
-                len(self._active_tickers),
-                self._active_tickers,
-            )
+            log.info("Tracking %d markets total", len(self._active_tickers))
 
     async def _fetch_markets_for_prefix(self, series_ticker: str) -> list[str]:
         """
-        Query /markets with series_ticker filter and return active tickers.
+        Query /markets with series_ticker filter and return all active tickers.
         Falls back to an empty list on error so discovery never crashes.
         """
         await self._rate_limiter.acquire()
@@ -222,65 +220,8 @@ class KalshiClient:
             markets = resp.json().get("markets", [])
             return [m["ticker"] for m in markets if m.get("ticker")]
         except Exception as exc:
-            log.warning("Market discovery failed for %s: %s", series_ticker, exc)
+            log.warning("Market discovery failed for %s: [%s] %s", series_ticker, type(exc).__name__, exc)
             return []
-
-    async def _fetch_markets_broad(self) -> list[str]:
-        """
-        Paginated market scan using cursor-based pagination (Kalshi API max
-        100 per page).  Keeps only pure BTC/ETH Up-or-Down 5-min/15-min markets.
-        """
-        results: list[str] = []
-        cursor: Optional[str] = None
-        page = 0
-        max_pages = 20  # safety cap — 20 × 100 = 2000 markets max
-
-        while page < max_pages:
-            await self._rate_limiter.acquire()
-            params: dict = {"status": "open", "limit": 100}
-            if cursor:
-                params["cursor"] = cursor
-            try:
-                resp = await self._http.get("/markets", params=params)  # type: ignore[union-attr]
-                if resp.status_code != 200:
-                    log.warning(
-                        "Broad market scan page %d failed: HTTP %d — %s",
-                        page, resp.status_code, resp.text[:200],
-                    )
-                    break
-                body = resp.json()
-            except Exception as exc:
-                log.warning("Broad market scan page %d error: [%s] %s", page, type(exc).__name__, exc)
-                break
-
-            markets = body.get("markets", [])
-            # Log all BTC/ETH related tickers on first page for diagnostics
-            if page == 0 and markets:
-                btc_eth = [m for m in markets if any(a in m.get("ticker","").upper() for a in ("BTC","ETH"))]
-                if btc_eth:
-                    log.info("BTC/ETH markets on page 0:")
-                    for m in btc_eth[:20]:
-                        log.info("  %-45s | %s", m.get("ticker",""), m.get("title",""))
-                else:
-                    log.info("No BTC/ETH markets on page 0 (sample: %s)", markets[0].get("ticker","") if markets else "none")
-
-            for m in markets:
-                ticker: str = m.get("ticker", "")
-                # Keep any market whose ticker starts with the direction-series prefixes.
-                # KXBTCD = BTC direction, KXETHD = ETH direction.
-                # Also accept KXBTC/KXETH with a D suffix segment.
-                t_upper = ticker.upper()
-                if any(t_upper.startswith(p) for p in ("KXBTCD", "KXETHD")):
-                    results.append(ticker)
-                    log.info("Found direction market: %s | %s", ticker, m.get("title", ""))
-
-            cursor = body.get("cursor")
-            page += 1
-            if not cursor or not markets:
-                break  # no more pages
-
-        log.info("Broad scan complete: %d pages scanned, %d matching markets found", page, len(results))
-        return results
 
     # ------------------------------------------------------------------
     # Quote fetching
