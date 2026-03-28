@@ -97,7 +97,7 @@ class RiskConfig:
             min_confidence=_float("MIN_CONFIDENCE", 0.70),
             lag_threshold_pct=_float("LAG_THRESHOLD_PCT", 0.03),
             daily_drawdown_limit=_float("DAILY_DRAWDOWN_LIMIT", 0.20),
-            daily_profit_target=_float("DAILY_PROFIT_TARGET", 0.05),
+            daily_profit_target=_float("DAILY_PROFIT_TARGET", 0.10),
             win_streak_boost=_float("WIN_STREAK_BOOST", 0.10),
             win_streak_max_boost=_float("WIN_STREAK_MAX_BOOST", 2.0),
             loss_streak_threshold=int(_float("LOSS_STREAK_THRESHOLD", 3)),
