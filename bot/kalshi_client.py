@@ -114,7 +114,7 @@ class KalshiClient:
                 "Authorization": f"Bearer {self._cfg.api_key}",
                 "Content-Type": "application/json",
             },
-            timeout=10.0,
+            timeout=httpx.Timeout(30.0, connect=15.0),
         )
         await self._discover_markets()
         log.info("KalshiClient started — tracking %d markets", len(self._active_tickers))
@@ -250,7 +250,7 @@ class KalshiClient:
                     break
                 body = resp.json()
             except Exception as exc:
-                log.warning("Broad market scan page %d error: %s", page, exc)
+                log.warning("Broad market scan page %d error: [%s] %s", page, type(exc).__name__, exc)
                 break
 
             markets = body.get("markets", [])
